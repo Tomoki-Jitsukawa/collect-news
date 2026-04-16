@@ -45,7 +45,6 @@ def fetch_news(company: str) -> list[dict]:
     articles = []
     for entry in feed.entries:
         articles.append({
-            "company": company,
             "title": strip_html(entry.get("title", "")),
             "link": entry.get("link", ""),
             "published": entry.get("published", ""),
@@ -67,7 +66,7 @@ def collect_all_news() -> dict[str, list[dict]]:
 def save_to_markdown(news_by_company: dict[str, list[dict]], output_path: str) -> None:
     total = sum(len(articles) for articles in news_by_company.values())
     lines = [
-        "# Web3ニュース収集結果",
+        "# Web3ニュース日次ダイジェスト",
         "",
         f"収集日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"合計: {total} 件",
@@ -77,7 +76,7 @@ def save_to_markdown(news_by_company: dict[str, list[dict]], output_path: str) -
     ]
 
     for company, articles in news_by_company.items():
-        lines.append(f"# {company}（{len(articles)} 件）")
+        lines.append(f"## {company}（{len(articles)} 件）")
         lines.append("")
         if not articles:
             lines.append("該当ニュースなし")
@@ -86,7 +85,7 @@ def save_to_markdown(news_by_company: dict[str, list[dict]], output_path: str) -
             lines.append("")
             continue
         for article in articles:
-            lines.append(f"## [{article['title']}]({article['link']})")
+            lines.append(f"### [{article['title']}]({article['link']})")
             if article["published"]:
                 lines.append(f"**公開日**: {article['published']}")
             if article["summary"]:
