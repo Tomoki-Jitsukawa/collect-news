@@ -21,6 +21,6 @@
     "DeFi"
   ],
   "articles_per_company": 20,
-  "output_file": "news.md",
+  "latest_dir": "latest",
   "archive_dir": "archive"
 }

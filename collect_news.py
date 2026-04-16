@@ -15,6 +15,7 @@ Web3関連ニュースをMarkdown形式でまとめて出力する。
 import html
 import json
 import re
+import shutil
 import feedparser
 from datetime import datetime
 from pathlib import Path
@@ -29,7 +30,7 @@ with open("config.json", encoding="utf-8") as f:
 COMPANIES: list[str] = config["companies"]
 WEB3_KEYWORDS: list[str] = config["web3_keywords"]
 ARTICLES_PER_COMPANY: int = config["articles_per_company"]
-OUTPUT_FILE: str = config["output_file"]
+LATEST_DIR: str = config["latest_dir"]
 ARCHIVE_DIR: str = config["archive_dir"]
 
 
@@ -143,16 +144,116 @@ def save_to_markdown(news_by_company: dict[str, list[dict]], output_path: str) -
     print(f"\n合計 {total} 件を {output_path} に保存しました")
 
 
+# ── HTML出力 ──────────────────────────────────────────────
+
+def save_to_html(news_by_company: dict[str, list[dict]], output_path: str) -> None:
+    """企業ごとのニュースリストをHTMLファイルに書き出す。"""
+    total = sum(len(articles) for articles in news_by_company.values())
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 企業ごとのセクションHTMLを生成
+    sections = []
+    for company, articles in news_by_company.items():
+        if not articles:
+            article_html = '<p class="no-news">該当ニュースなし</p>'
+        else:
+            items = []
+            for article in articles:
+                title = html.escape(article["title"])
+                link = html.escape(article["link"])
+                published = html.escape(article["published"]) if article["published"] else ""
+                summary = html.escape(article["summary"]) if article["summary"] else ""
+
+                published_html = f'<div class="published">公開日: {published}</div>' if published else ""
+                summary_html = f'<p class="summary">{summary}</p>' if summary else ""
+                items.append(
+                    f'<li class="article">'
+                    f'<a href="{link}" target="_blank" rel="noopener noreferrer">{title}</a>'
+                    f'{published_html}'
+                    f'{summary_html}'
+                    f'</li>'
+                )
+            article_html = f'<ul class="article-list">{"".join(items)}</ul>'
+
+        sections.append(
+            f'<section class="company">'
+            f'<h2>{html.escape(company)}<span class="count">{len(articles)}件</span></h2>'
+            f'{article_html}'
+            f'</section>'
+        )
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web3ニュース日次ダイジェスト</title>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; background: #f5f7fa; color: #333; line-height: 1.6; }}
+    header {{ background: #1a1a2e; color: #fff; padding: 24px 32px; }}
+    header h1 {{ font-size: 1.5rem; font-weight: 700; }}
+    header .meta {{ margin-top: 6px; font-size: 0.85rem; opacity: 0.7; }}
+    main {{ max-width: 960px; margin: 32px auto; padding: 0 16px; }}
+    .company {{ background: #fff; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); margin-bottom: 28px; padding: 24px 28px; }}
+    .company h2 {{ font-size: 1.15rem; color: #1a1a2e; border-bottom: 2px solid #e0e4f0; padding-bottom: 10px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }}
+    .count {{ font-size: 0.78rem; background: #e8ecf8; color: #4a5568; border-radius: 12px; padding: 2px 10px; font-weight: 500; }}
+    .article-list {{ list-style: none; display: flex; flex-direction: column; gap: 14px; }}
+    .article {{ border-left: 3px solid #4a6cf7; padding: 10px 14px; background: #f9faff; border-radius: 0 6px 6px 0; }}
+    .article a {{ font-size: 0.97rem; font-weight: 600; color: #2d3a8c; text-decoration: none; }}
+    .article a:hover {{ text-decoration: underline; }}
+    .published {{ font-size: 0.78rem; color: #888; margin-top: 4px; }}
+    .summary {{ font-size: 0.85rem; color: #555; margin-top: 6px; }}
+    .no-news {{ color: #aaa; font-size: 0.9rem; }}
+    footer {{ text-align: center; padding: 24px; font-size: 0.8rem; color: #aaa; }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Web3ニュース日次ダイジェスト</h1>
+    <div class="meta">収集日時: {generated_at}　合計: {total}件</div>
+  </header>
+  <main>
+    {"".join(sections)}
+  </main>
+  <footer>自動収集 by news_collect</footer>
+</body>
+</html>"""
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html_content)
+    print(f"HTML: {total} 件を {output_path} に保存しました")
+
+
 # ── エントリーポイント ────────────────────────────────────
 
 if __name__ == "__main__":
     news_by_company = collect_all_news()
 
-    # 最新結果を news.md に上書き保存
-    save_to_markdown(news_by_company, OUTPUT_FILE)
+    now = datetime.now()
+    date_str = now.strftime("%Y-%m-%d")
+    year_str = now.strftime("%Y")
+    month_str = now.strftime("%m")
 
-    # アーカイブディレクトリに日付別ファイルとして保存
-    # 例: archive/2026-04-17.md
-    archive_path = Path(ARCHIVE_DIR) / f"{datetime.now().strftime('%Y-%m-%d')}.md"
-    archive_path.parent.mkdir(exist_ok=True)
-    save_to_markdown(news_by_company, str(archive_path))
+    # latest/ を一旦クリアして今日の日付ファイルを書き込む
+    # 例: latest/2026-04-17.md / latest/2026-04-17.html
+    latest_dir = Path(LATEST_DIR)
+    if latest_dir.exists():
+        shutil.rmtree(latest_dir)
+    latest_dir.mkdir(parents=True)
+
+    save_to_markdown(news_by_company, str(latest_dir / f"{date_str}.md"))
+    save_to_html(news_by_company, str(latest_dir / f"{date_str}.html"))
+
+    # アーカイブに年/月階層で保存
+    # 例: archive/md/2026/04/2026-04-17.md / archive/html/2026/04/2026-04-17.html
+    archive_base = Path(ARCHIVE_DIR)
+
+    md_archive_path = archive_base / "md" / year_str / month_str / f"{date_str}.md"
+    md_archive_path.parent.mkdir(parents=True, exist_ok=True)
+    save_to_markdown(news_by_company, str(md_archive_path))
+
+    html_archive_path = archive_base / "html" / year_str / month_str / f"{date_str}.html"
+    html_archive_path.parent.mkdir(parents=True, exist_ok=True)
+    save_to_html(news_by_company, str(html_archive_path))
