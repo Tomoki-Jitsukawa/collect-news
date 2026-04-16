@@ -1,23 +1,51 @@
 import feedparser
 import re
 from datetime import datetime
+from urllib.parse import urlencode
 
 
 def strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text)
 
 
-RSS_FEEDS = {
-    "Google アラート": "https://www.google.co.jp/alerts/feeds/13715549885112167831/3268479610179157607",
-}
+COMPANIES = [
+    "三菱UFJ銀行",
+    "SBI証券",
+    "みずほ銀行",
+    "野村證券",
+    "三井住友銀行",
+    "マネックス証券",
+    "GMOフィナンシャルホールディングス",
+    "bitFlyer",
+]
+
+WEB3_KEYWORDS = [
+    "web3",
+    "ブロックチェーン",
+    "暗号資産",
+    "ステーブルコイン",
+    "トークン化",
+    "セキュリティトークン",
+    "クリプト",
+    "NFT",
+    "DeFi",
+]
 
 
-def fetch_news(feed_name: str, feed_url: str) -> list[dict]:
-    feed = feedparser.parse(feed_url)
+def build_url(company: str) -> str:
+    keyword_query = " OR ".join(WEB3_KEYWORDS)
+    query = f"{company} ({keyword_query})"
+    params = urlencode({"q": query, "hl": "ja", "gl": "JP", "ceid": "JP:ja"})
+    return f"https://news.google.com/rss/search?{params}"
+
+
+def fetch_news(company: str) -> list[dict]:
+    url = build_url(company)
+    feed = feedparser.parse(url)
     articles = []
     for entry in feed.entries:
         articles.append({
-            "source": feed_name,
+            "company": company,
             "title": strip_html(entry.get("title", "")),
             "link": entry.get("link", ""),
             "published": entry.get("published", ""),
@@ -26,42 +54,53 @@ def fetch_news(feed_name: str, feed_url: str) -> list[dict]:
     return articles
 
 
-def collect_all_news() -> list[dict]:
-    all_articles = []
-    for name, url in RSS_FEEDS.items():
-        print(f"取得中: {name}")
-        articles = fetch_news(name, url)
-        all_articles.extend(articles)
+def collect_all_news() -> dict[str, list[dict]]:
+    result = {}
+    for company in COMPANIES:
+        print(f"取得中: {company}")
+        articles = fetch_news(company)
+        result[company] = articles
         print(f"  {len(articles)} 件取得")
-    return all_articles
+    return result
 
 
-def save_to_markdown(articles: list[dict], output_path: str) -> None:
+def save_to_markdown(news_by_company: dict[str, list[dict]], output_path: str) -> None:
+    total = sum(len(articles) for articles in news_by_company.values())
     lines = [
-        f"# ニュース収集結果",
-        f"",
+        "# Web3ニュース収集結果",
+        "",
         f"収集日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"件数: {len(articles)} 件",
-        f"",
+        f"合計: {total} 件",
+        "",
         "---",
         "",
     ]
-    for article in articles:
-        lines.append(f"## [{article['title']}]({article['link']})")
-        if article["published"]:
-            lines.append(f"**公開日**: {article['published']}")
-        if article["summary"]:
-            lines.append(f"")
-            lines.append(article["summary"])
+
+    for company, articles in news_by_company.items():
+        lines.append(f"# {company}（{len(articles)} 件）")
         lines.append("")
+        if not articles:
+            lines.append("該当ニュースなし")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+            continue
+        for article in articles:
+            lines.append(f"## [{article['title']}]({article['link']})")
+            if article["published"]:
+                lines.append(f"**公開日**: {article['published']}")
+            if article["summary"]:
+                lines.append("")
+                lines.append(article["summary"])
+            lines.append("")
         lines.append("---")
         lines.append("")
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
-    print(f"\n{len(articles)} 件を {output_path} に保存しました")
+    print(f"\n合計 {total} 件を {output_path} に保存しました")
 
 
 if __name__ == "__main__":
-    articles = collect_all_news()
-    save_to_markdown(articles, "news.md")
+    news_by_company = collect_all_news()
+    save_to_markdown(news_by_company, "news.md")
