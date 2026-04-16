@@ -1,11 +1,13 @@
-import feedparser
+import html
 import re
+import feedparser
 from datetime import datetime
 from urllib.parse import urlencode
 
 
 def strip_html(text: str) -> str:
-    return re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    return html.unescape(text).strip()
 
 
 COMPANIES = [
@@ -43,7 +45,7 @@ def fetch_news(company: str) -> list[dict]:
     url = build_url(company)
     feed = feedparser.parse(url)
     articles = []
-    for entry in feed.entries:
+    for entry in feed.entries[:20]:
         articles.append({
             "title": strip_html(entry.get("title", "")),
             "link": entry.get("link", ""),
@@ -58,8 +60,8 @@ def collect_all_news() -> dict[str, list[dict]]:
     for company in COMPANIES:
         print(f"取得中: {company}")
         articles = fetch_news(company)
-        result[company] = articles
         print(f"  {len(articles)} 件取得")
+        result[company] = articles
     return result
 
 
