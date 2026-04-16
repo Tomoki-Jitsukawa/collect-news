@@ -5,10 +5,11 @@ Web3ニュース収集スクリプト
 Web3関連ニュースをMarkdown形式でまとめて出力する。
 
 設定は config.json で管理する:
-  - companies       : 監視対象の企業名リスト
-  - web3_keywords   : 検索に使うWeb3関連キーワード
+  - companies            : 監視対象の企業名リスト
+  - web3_keywords        : 検索に使うWeb3関連キーワード
   - articles_per_company : 企業ごとの最大取得件数
-  - output_file     : 出力先ファイルパス
+  - output_file          : 最新結果の出力先ファイルパス
+  - archive_dir          : 日付別アーカイブの保存ディレクトリ
 """
 
 import html
@@ -16,6 +17,7 @@ import json
 import re
 import feedparser
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import urlencode
 
 
@@ -28,6 +30,7 @@ COMPANIES: list[str] = config["companies"]
 WEB3_KEYWORDS: list[str] = config["web3_keywords"]
 ARTICLES_PER_COMPANY: int = config["articles_per_company"]
 OUTPUT_FILE: str = config["output_file"]
+ARCHIVE_DIR: str = config["archive_dir"]
 
 
 # ── ユーティリティ ────────────────────────────────────────
@@ -144,4 +147,12 @@ def save_to_markdown(news_by_company: dict[str, list[dict]], output_path: str) -
 
 if __name__ == "__main__":
     news_by_company = collect_all_news()
+
+    # 最新結果を news.md に上書き保存
     save_to_markdown(news_by_company, OUTPUT_FILE)
+
+    # アーカイブディレクトリに日付別ファイルとして保存
+    # 例: archive/2026-04-17.md
+    archive_path = Path(ARCHIVE_DIR) / f"{datetime.now().strftime('%Y-%m-%d')}.md"
+    archive_path.parent.mkdir(exist_ok=True)
+    save_to_markdown(news_by_company, str(archive_path))
