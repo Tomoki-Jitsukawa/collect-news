@@ -14,6 +14,7 @@ Web3関連ニュースをMarkdown形式でまとめて出力する。
 
 import html
 import json
+import platform
 import re
 import shutil
 import feedparser
@@ -226,6 +227,240 @@ def save_to_html(news_by_company: dict[str, list[dict]], output_path: str) -> No
     print(f"HTML: {total} 件を {output_path} に保存しました")
 
 
+# ── PNG出力 ───────────────────────────────────────────────
+
+def _find_japanese_font() -> str | None:
+    """日本語対応フォントのパスを返す。見つからない場合はNone。"""
+    candidates = []
+    if platform.system() == "Linux":
+        candidates = [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        ]
+    elif platform.system() == "Darwin":
+        candidates = [
+            "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+            "/System/Library/Fonts/Supplemental/Hiragino Sans GB.ttc",
+        ]
+    for p in candidates:
+        if Path(p).exists():
+            return p
+    return None
+
+
+def save_to_png(news_by_company: dict[str, list[dict]], output_path: str) -> None:
+    """ニュースを縦長PNG画像として出力する。"""
+    from PIL import Image, ImageDraw, ImageFont
+
+    # ── 定数 ─────────────────────────────────────────────
+    WIDTH       = 1200
+    OUTER_PAD   = 40
+    CARD_PAD    = 24
+    ART_PAD_L   = 14    # アクセントバー後のテキスト左余白
+    ACCENT_W    = 4     # アクセントバー幅
+    HEADER_H    = 110
+    HEADER_GAP  = 32
+    CARD_GAP    = 20
+    CARD_SHD    = 4     # シャドウオフセット
+    FOOTER_H    = 50
+    LINE_GAP    = 2     # 行間
+    ART_TOP     = 10    # 記事内上マージン
+    ART_BOTTOM  = 10    # 記事内下マージン
+
+    # カラー
+    C_BG          = (245, 247, 250)
+    C_HEADER_BG   = (26,  26,  46)
+    C_HEADER_TEXT = (255, 255, 255)
+    C_HEADER_META = (160, 160, 190)
+    C_CARD_BG     = (255, 255, 255)
+    C_CARD_SHD    = (210, 215, 230)
+    C_COMPANY     = (26,  26,  46)
+    C_DIVIDER     = (224, 228, 240)
+    C_ACCENT      = (74,  108, 247)
+    C_TITLE       = (45,  58,  140)
+    C_DATE        = (136, 136, 136)
+    C_SUMMARY     = (85,  85,  85)
+    C_NO_NEWS     = (170, 170, 170)
+    C_FOOTER      = (170, 170, 170)
+    C_COUNT_BG    = (232, 236, 248)
+    C_COUNT_TEXT  = (74,  85,  104)
+
+    # ── フォント ──────────────────────────────────────────
+    font_path = _find_japanese_font()
+
+    def mf(size: int) -> ImageFont.FreeTypeFont:
+        if font_path:
+            try:
+                return ImageFont.truetype(font_path, size)
+            except Exception:
+                pass
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:
+            return ImageFont.load_default()
+
+    f_h1      = mf(30)
+    f_meta    = mf(14)
+    f_company = mf(20)
+    f_count   = mf(13)
+    f_art_ttl = mf(15)
+    f_art_dat = mf(12)
+    f_art_bod = mf(13)
+    f_no_news = mf(13)
+    f_footer  = mf(12)
+
+    # ── ヘルパー ──────────────────────────────────────────
+    def th(d: "ImageDraw.ImageDraw", font, sample: str = "テA") -> int:
+        """テキスト行高さ。"""
+        b = d.textbbox((0, 0), sample, font=font)
+        return b[3] - b[1]
+
+    def tw(d: "ImageDraw.ImageDraw", text: str, font) -> int:
+        """テキスト幅。"""
+        b = d.textbbox((0, 0), text, font=font)
+        return b[2] - b[0]
+
+    def wrap(d: "ImageDraw.ImageDraw", text: str, font, max_w: int) -> list[str]:
+        """1文字単位で折り返す（日本語対応）。"""
+        lines, cur = [], ""
+        for ch in text:
+            if tw(d, cur + ch, font) <= max_w:
+                cur += ch
+            else:
+                if cur:
+                    lines.append(cur)
+                cur = ch
+        if cur:
+            lines.append(cur)
+        return lines or [""]
+
+    # ── 高さ計算 ──────────────────────────────────────────
+    content_w    = WIDTH - OUTER_PAD * 2
+    card_inner_w = content_w - CARD_PAD * 2
+    text_w       = card_inner_w - ACCENT_W - ART_PAD_L - 8
+
+    dummy = Image.new("RGB", (WIDTH, 1))
+    d     = ImageDraw.Draw(dummy)
+
+    def article_h(d, article: dict) -> int:
+        h = ART_TOP
+        h += len(wrap(d, article["title"], f_art_ttl, text_w)) * (th(d, f_art_ttl) + LINE_GAP)
+        if article["published"]:
+            h += 4 + th(d, f_art_dat)
+        if article["summary"]:
+            h += 6 + len(wrap(d, article["summary"], f_art_bod, text_w)) * (th(d, f_art_bod) + LINE_GAP)
+        h += ART_BOTTOM
+        return h
+
+    def card_h(d, articles: list[dict]) -> int:
+        h = CARD_PAD + th(d, f_company) + 12 + 1 + 14
+        if not articles:
+            h += th(d, f_no_news)
+        else:
+            for i, art in enumerate(articles):
+                h += article_h(d, art)
+                if i < len(articles) - 1:
+                    h += 1  # 記事間区切り線
+        h += CARD_PAD
+        return h
+
+    total        = sum(len(v) for v in news_by_company.values())
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    card_heights = {company: card_h(d, articles) for company, articles in news_by_company.items()}
+    total_h = HEADER_H + HEADER_GAP
+    for ch in card_heights.values():
+        total_h += ch + CARD_SHD + CARD_GAP
+    total_h += FOOTER_H
+
+    # ── 描画 ─────────────────────────────────────────────
+    img  = Image.new("RGB", (WIDTH, total_h), C_BG)
+    draw = ImageDraw.Draw(img)
+
+    # ヘッダー
+    draw.rectangle([0, 0, WIDTH, HEADER_H], fill=C_HEADER_BG)
+    draw.text((OUTER_PAD, 28), "Web3ニュース日次ダイジェスト", font=f_h1, fill=C_HEADER_TEXT)
+    draw.text(
+        (OUTER_PAD, 28 + th(draw, f_h1) + 12),
+        f"収集日時: {generated_at}　合計: {total}件",
+        font=f_meta, fill=C_HEADER_META,
+    )
+
+    y = HEADER_H + HEADER_GAP
+
+    for company, articles in news_by_company.items():
+        ch = card_heights[company]
+        x0, x1 = OUTER_PAD, OUTER_PAD + content_w
+
+        # シャドウ + カード背景
+        draw.rectangle([x0 + CARD_SHD, y + CARD_SHD, x1 + CARD_SHD, y + ch + CARD_SHD], fill=C_CARD_SHD)
+        draw.rectangle([x0, y, x1, y + ch], fill=C_CARD_BG)
+
+        cy = y + CARD_PAD
+
+        # 企業名
+        draw.text((x0 + CARD_PAD, cy), company, font=f_company, fill=C_COMPANY)
+        # 件数バッジ
+        count_text = f"{len(articles)}件"
+        badge_x = x0 + CARD_PAD + tw(draw, company, f_company) + 12
+        badge_y = cy + (th(draw, f_company) - th(draw, f_count)) // 2
+        cw_px   = tw(draw, count_text, f_count)
+        draw.rectangle(
+            [badge_x - 6, badge_y - 3, badge_x + cw_px + 6, badge_y + th(draw, f_count) + 3],
+            fill=C_COUNT_BG,
+        )
+        draw.text((badge_x, badge_y), count_text, font=f_count, fill=C_COUNT_TEXT)
+
+        cy += th(draw, f_company) + 12
+        draw.line([x0 + CARD_PAD, cy, x1 - CARD_PAD, cy], fill=C_DIVIDER, width=1)
+        cy += 1 + 14
+
+        if not articles:
+            draw.text((x0 + CARD_PAD, cy), "該当ニュースなし", font=f_no_news, fill=C_NO_NEWS)
+        else:
+            for i, article in enumerate(articles):
+                ax        = x0 + CARD_PAD
+                tx        = ax + ACCENT_W + ART_PAD_L
+                art_start = cy
+                ay        = cy + ART_TOP
+
+                for line in wrap(draw, article["title"], f_art_ttl, text_w):
+                    draw.text((tx, ay), line, font=f_art_ttl, fill=C_TITLE)
+                    ay += th(draw, f_art_ttl) + LINE_GAP
+
+                if article["published"]:
+                    ay += 4
+                    draw.text((tx, ay), article["published"], font=f_art_dat, fill=C_DATE)
+                    ay += th(draw, f_art_dat)
+
+                if article["summary"]:
+                    ay += 6
+                    for line in wrap(draw, article["summary"], f_art_bod, text_w):
+                        draw.text((tx, ay), line, font=f_art_bod, fill=C_SUMMARY)
+                        ay += th(draw, f_art_bod) + LINE_GAP
+
+                ay += ART_BOTTOM
+                # アクセントバー
+                draw.rectangle([ax, art_start + 4, ax + ACCENT_W, ay - 4], fill=C_ACCENT)
+                cy = ay
+
+                if i < len(articles) - 1:
+                    draw.line([x0 + CARD_PAD, cy, x1 - CARD_PAD, cy], fill=C_DIVIDER, width=1)
+                    cy += 1
+
+        y += ch + CARD_SHD + CARD_GAP
+
+    # フッター
+    footer_text = "自動収集 by news_collect"
+    fw = tw(draw, footer_text, f_footer)
+    draw.text(((WIDTH - fw) // 2, y + 16), footer_text, font=f_footer, fill=C_FOOTER)
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    img.save(output_path, "PNG", optimize=True)
+    print(f"PNG: {total} 件を {output_path} に保存しました")
+
+
 # ── エントリーポイント ────────────────────────────────────
 
 if __name__ == "__main__":
@@ -245,9 +480,11 @@ if __name__ == "__main__":
 
     save_to_markdown(news_by_company, str(latest_dir / f"{date_str}.md"))
     save_to_html(news_by_company, str(latest_dir / f"{date_str}.html"))
+    save_to_png(news_by_company, str(latest_dir / f"{date_str}.png"))
 
     # アーカイブに年/月階層で保存
     # 例: archive/md/2026/04/2026-04-17.md / archive/html/2026/04/2026-04-17.html
+    #      archive/png/2026/04/2026-04-17.png
     archive_base = Path(ARCHIVE_DIR)
 
     md_archive_path = archive_base / "md" / year_str / month_str / f"{date_str}.md"
@@ -257,3 +494,7 @@ if __name__ == "__main__":
     html_archive_path = archive_base / "html" / year_str / month_str / f"{date_str}.html"
     html_archive_path.parent.mkdir(parents=True, exist_ok=True)
     save_to_html(news_by_company, str(html_archive_path))
+
+    png_archive_path = archive_base / "png" / year_str / month_str / f"{date_str}.png"
+    png_archive_path.parent.mkdir(parents=True, exist_ok=True)
+    save_to_png(news_by_company, str(png_archive_path))
